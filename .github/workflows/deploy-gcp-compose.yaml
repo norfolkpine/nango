@@ -42,13 +42,14 @@ jobs:
             echo "Using DEPLOY_DIR: $DEPLOY_DIR"
             cd "$DEPLOY_DIR"
 
-            docker --version
-            docker compose version
+            sudo docker --version
+            sudo docker compose version
 
             echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf > /dev/null
+            echo "nameserver 1.1.1.1" | sudo tee -a /etc/resolv.conf > /dev/null
 
             test -f docker-compose.yaml || test -f docker-compose.yml
-            docker compose pull || true
-            docker compose up -d
+            sudo docker compose pull || true
+            sudo docker compose up -d
 
             echo "✅ Deploy success"
