@@ -1,0 +1,67 @@
+name: Deploy to GCP VM (Docker Compose - SSH only)
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - ".github/workflows/deploy-gcp-compose.yml"
+  workflow_dispatch:
+    inputs:
+      deploy_dir:
+        description: "Remote deploy dir (fallback to DEPLOY_DIR secret)"
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: SSH → docker compose pull/up -d
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Sanity check secrets
+        run: |
+          test -n "${{ secrets.SSH_HOST }}" || (echo "SSH_HOST empty" && exit 1)
+          test -n "${{ secrets.SSH_USER }}" || (echo "SSH_USER empty" && exit 1)
+          test -n "${{ secrets.SSH_KEY }}"  || (echo "SSH_KEY empty"  && exit 1)
+          test -n "${{ secrets.DEPLOY_DIR }}" || echo "DEPLOY_DIR secret not set (will rely on input)"
+
+      - name: Write SSH key file
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+
+      - name: Deploy via SSH (docker compose)
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key_path: ~/.ssh/id_deploy
+          port: 22
+          script_stop: true
+          script: |
+            set -euo pipefail
+
+            DEPLOY_DIR="${{ github.event.inputs.deploy_dir }}"
+            if [ -z "$DEPLOY_DIR" ]; then DEPLOY_DIR="${{ secrets.DEPLOY_DIR }}"; fi
+            if [ -z "$DEPLOY_DIR" ]; then echo "::error::DEPLOY_DIR not provided"; exit 1; fi
+
+            echo "Using DEPLOY_DIR: $DEPLOY_DIR"
+            cd "$DEPLOY_DIR"
+
+            # Pastikan docker & compose ada
+            docker --version
+            docker compose version
+
+            # Pastikan file compose ada
+            test -f docker-compose.yaml || test -f docker-compose.yml
+
+            echo "Pull latest images..."
+            docker compose pull || true
+
+            echo "Up containers..."
+            docker compose up -d
+
+            echo "Done."
