@@ -2,9 +2,7 @@ name: Deploy to GCP VM (Docker Compose - SSH only)
 
 on:
   push:
-    branches: [master]
-    paths:
-      - ".github/workflows/deploy-gcp-compose.yml"
+    branches: [master]   
   workflow_dispatch:
     inputs:
       deploy_dir:
