@@ -1,125 +1,130 @@
-name: Deploy Self-Hosted to GCP (Cloud Run)
+name: Deploy to GCP VM (Docker Compose)
 
 on:
+  push:
+    branches: [cicd]
+    paths:
+      - "docker-compose.yaml"
+      - "packages/providers/providers.yaml"
+      - ".github/workflows/deploy-gcp-compose.yml"
   workflow_dispatch:
     inputs:
-      environment:
-        description: "Target env"
-        type: choice
-        options: [staging, production]
-        required: true
-        default: staging
-      image_tag:
-        description: "Image tag (default uses commit SHA)"
+      deploy_dir:
+        description: "Remote deploy dir override (else use secret)"
         required: false
 
 permissions:
   contents: read
-  id-token: write 
-
-env:
-  GAR_LOCATION: ${{ vars.GAR_LOCATION }}       
-  GAR_REPO: ${{ vars.GAR_REPO }}                
-  CLOUD_RUN_REGION: ${{ vars.CLOUD_RUN_REGION }}# e.g. asia-southeast2
-  CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
-  GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
 
 jobs:
-  build-and-push:
-    name: Build & Push Image to Artifact Registry
+  deploy:
+    name: Sync → Compose Up → Healthcheck → Rollback
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Auth to Google Cloud (WIF)
-        uses: google-github-actions/auth@v2
+      - name: Copy docker-compose.yaml
+        uses: appleboy/scp-action@v0.1.7
         with:
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }} 
-          project_id: ${{ env.GCP_PROJECT_ID }}
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          source: "docker-compose.yaml"
+          target: "${{ github.event.inputs.deploy_dir || secrets.DEPLOY_DIR }}"
 
-      - name: Set up gcloud
-        uses: google-github-actions/setup-gcloud@v2
-
-      - name: Configure Docker to use gcloud as a credential helper
-        run: |
-          gcloud auth configure-docker ${GAR_LOCATION}-docker.pkg.dev --quiet
-
-      - name: Compute image tag
-        id: vars
-        run: |
-          TAG="${{ github.event.inputs.image_tag }}"
-          if [ -z "$TAG" ]; then TAG="${GITHUB_SHA::12}"; fi
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "image=${GAR_LOCATION}-docker.pkg.dev/${GCP_PROJECT_ID}/${GAR_REPO}/nango:${TAG}" >> "$GITHUB_OUTPUT"
-
-      - name: Build & Push
-        uses: docker/build-push-action@v6
+      - name: Copy providers.yaml
+        if: ${{ hashFiles('packages/providers/providers.yaml') != '' }}
+        uses: appleboy/scp-action@v0.1.7
         with:
-          context: .
-          file: ./Dockerfile
-          push: true
-          tags: ${{ steps.vars.outputs.image }}
-          provenance: false
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          source: "packages/providers/providers.yaml"
+          target: "${{ github.event.inputs.deploy_dir || secrets.DEPLOY_DIR }}/packages/providers"
+          strip_components: 2
 
-      - name: Set artifact outputs
-        run: |
-          echo "IMAGE=${{ steps.vars.outputs.image }}" >> $GITHUB_ENV
-
-  deploy:
-    name: Deploy to Cloud Run
-    runs-on: ubuntu-latest
-    needs: build-and-push
-    environment: ${{ github.event.inputs.environment }}
-
-    steps:
-      - name: Auth to Google Cloud (WIF)
-        uses: google-github-actions/auth@v2
+      - name: Deploy via SSH
+        id: ssh
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          DEPLOY_DIR: ${{ github.event.inputs.deploy_dir || secrets.DEPLOY_DIR }}
+          HEALTH_URL: ${{ secrets.HEALTH_URL }}   
         with:
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-          project_id: ${{ env.GCP_PROJECT_ID }}
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+            cd "$DEPLOY_DIR"
 
-      - name: Deploy to Cloud Run
-        id: deploy
-        uses: google-github-actions/deploy-cloudrun@v2
-        with:
-          service: ${{ env.CLOUD_RUN_SERVICE }}
-          region: ${{ env.CLOUD_RUN_REGION }}
-          image: ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GAR_REPO }}/nango:${{ github.event.inputs.image_tag || github.sha }}
-          env_vars: |
-            SERVER_PORT=3003
-            NANGO_SERVER_URL=${{ secrets.NANGO_SERVER_URL }}         # https://nango.yourdomain.com
-            NANGO_DATABASE_URL=${{ secrets.NANGO_DATABASE_URL }}     # postgres://user:pass@host:5432/db?sslmode=require
-            NANGO_ENCRYPTION_KEY=${{ secrets.NANGO_ENCRYPTION_KEY }} # 32-byte base64
-            FLAG_AUTH_ENABLED=false
-            NANGO_DASHBOARD_USERNAME=${{ secrets.NANGO_DASHBOARD_USERNAME }}
-            NANGO_DASHBOARD_PASSWORD=${{ secrets.NANGO_DASHBOARD_PASSWORD }}
-            FLAG_SERVE_CONNECT_UI=true
-            NANGO_PUBLIC_CONNECT_URL=${{ secrets.NANGO_PUBLIC_CONNECT_URL }} # usually same as NANGO_SERVER_URL
-            NANGO_CONNECT_UI_PORT=3009
-          flags: |
-            --allow-unauthenticated
-            --cpu=1 --memory=1Gi
-            --port=3003
-            --min-instances=0 --max-instances=3
-          
+            # Pastikan docker & compose terpasang
+            docker --version
+            docker compose version
 
-      - name: Output Service URL
-        run: echo "URL=${{ steps.deploy.outputs.url }}" >> $GITHUB_ENV
-
-      - name: Health check
-        run: |
-          set -e
-          URL="${{ steps.deploy.outputs.url }}"
-          echo "Hitting $URL/health..."
-          for i in {1..15}; do
-            code=$(curl -s -o /dev/null -w "%{http_code}" "$URL/health" || true)
-            if [ "$code" = "200" ]; then
-              echo "Healthy"; exit 0
+            # Pastikan .env ada (isi var2 untuk nango-server & nango-db jika dipakai)
+            if [ ! -f .env ]; then
+              echo "::error::.env tidak ditemukan di $DEPLOY_DIR" >&2
+              exit 1
             fi
-            sleep 4
-          done
-          echo "Health check failed"; exit 1
+
+            # Pastikan folder providers ada bila dibutuhkan oleh bind mount
+            mkdir -p packages/providers
+
+            # Catat image lama untuk rollback (jika ada)
+            PREV_IMAGE=$(docker inspect --format='{{.Config.Image}}' nango-server 2>/dev/null || true)
+            echo "Prev image: ${PREV_IMAGE:-<none>}"
+
+            # Pull image terbaru sesuai compose
+            docker compose pull nango-server || true
+            docker compose pull nango-db || true
+            docker compose pull nango-redis || true
+
+            # Up/recreate service
+            docker compose up -d
+
+            # Health check eksternal (via reverse proxy/domain)
+            echo "Health check: $HEALTH_URL"
+            for i in $(seq 1 20); do
+              code=$(curl -s -o /dev/null -w "%{http_code}" "$HEALTH_URL" || true)
+              if [ "$code" = "200" ]; then
+                echo "Healthy"
+                exit 0
+              fi
+              sleep 5
+            done
+
+            echo "Health check FAILED. Rolling back nango-server..."
+            if [ -n "$PREV_IMAGE" ]; then
+              docker pull "$PREV_IMAGE" || true
+              # Replace image untuk service nango-server lalu recreate
+              docker stop nango-server || true
+              docker rm nango-server || true
+              # Jalankan kembali dengan image sebelumnya
+              IMAGE_RESTORE_FILE=".image.restore"
+              echo "IMAGE=$PREV_IMAGE" > "$IMAGE_RESTORE_FILE"
+              # Override image lewat env substitution (compose file menggunakan image tetap untuk nango-server,
+              # kita pakai 'docker run' manual untuk rollback cepat)
+              docker run -d --name nango-server \
+                --restart=always \
+                --env-file .env \
+                --network $(basename "$(pwd)")_nango \
+                -p ${SERVER_PORT:-3003}:${SERVER_PORT:-3003} \
+                -p ${CONNECT_UI_PORT:-3009}:${CONNECT_UI_PORT:-3009} \
+                -v "$(pwd)/packages/providers/providers.yaml:/app/nango/packages/providers/providers.yaml" \
+                "$PREV_IMAGE"
+              rm -f "$IMAGE_RESTORE_FILE"
+              exit 1
+            else
+              echo "Tidak ada image sebelumnya untuk rollback."
+              exit 1
+            fi
+
+      - name: Mark success
+        if: ${{ success() }}
+        run: echo "Deploy OK"
