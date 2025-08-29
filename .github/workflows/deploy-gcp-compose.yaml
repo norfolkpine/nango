@@ -36,7 +36,7 @@ jobs:
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
-          key_path: ~/.ssh/id_deploy
+          key: ${{ secrets.SSH_KEY }}  
           port: 22
           script_stop: true
           script: |
@@ -49,17 +49,12 @@ jobs:
             echo "Using DEPLOY_DIR: $DEPLOY_DIR"
             cd "$DEPLOY_DIR"
 
-            # Pastikan docker & compose ada
             docker --version
             docker compose version
 
-            # Pastikan file compose ada
             test -f docker-compose.yaml || test -f docker-compose.yml
 
-            echo "Pull latest images..."
             docker compose pull || true
-
-            echo "Up containers..."
             docker compose up -d
 
             echo "Done."
