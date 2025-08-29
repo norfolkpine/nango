@@ -2,7 +2,7 @@ name: Deploy to GCP VM (Docker Compose - SSH only)
 
 on:
   push:
-    branches: [master]   
+    branches: [master]
   workflow_dispatch:
     inputs:
       deploy_dir:
@@ -14,7 +14,6 @@ permissions:
 
 jobs:
   deploy:
-    name: SSH → docker compose pull/up -d
     runs-on: ubuntu-latest
 
     steps:
@@ -23,20 +22,14 @@ jobs:
           test -n "${{ secrets.SSH_HOST }}" || (echo "SSH_HOST empty" && exit 1)
           test -n "${{ secrets.SSH_USER }}" || (echo "SSH_USER empty" && exit 1)
           test -n "${{ secrets.SSH_KEY }}"  || (echo "SSH_KEY empty"  && exit 1)
-          test -n "${{ secrets.DEPLOY_DIR }}" || echo "DEPLOY_DIR secret not set (will rely on input)"
-
-      - name: Write SSH key file
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_deploy
-          chmod 600 ~/.ssh/id_deploy
+          test -n "${{ secrets.DEPLOY_DIR }}" || echo "DEPLOY_DIR not set (will rely on input)"
 
       - name: Deploy via SSH (docker compose)
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_KEY }}  
+          key: ${{ secrets.SSH_KEY }}
           port: 22
           script_stop: true
           script: |
@@ -52,9 +45,10 @@ jobs:
             docker --version
             docker compose version
 
-            test -f docker-compose.yaml || test -f docker-compose.yml
+            echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf > /dev/null
 
+            test -f docker-compose.yaml || test -f docker-compose.yml
             docker compose pull || true
             docker compose up -d
 
-            echo "Done."
+            echo "✅ Deploy success"
