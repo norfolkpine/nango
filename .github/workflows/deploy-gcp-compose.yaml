@@ -44,8 +44,8 @@ jobs:
               cd $DEPLOY_DIR
               git fetch origin
               git reset --hard origin/master
-              docker compose pull || true
-              docker compose up -d --build
+              docker-compose pull || true
+              docker-compose up -d
             "
 
             echo "✅ Deploy success"
