@@ -61,7 +61,7 @@ services:
         image: redis:7.2.4
         container_name: nango-redis
         ports:
-            - '6379:6379'
+            - "${NANGO_REDIS_PORT}:6379"
         networks:
             - nango
     #
