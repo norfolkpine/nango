@@ -30,7 +30,7 @@ import { asyncWrapper } from '../../utils/asyncWrapper.js';
 
 import type { AuthOperationType, ConnectionConfig, ConnectionUpsertResponse, EndUser, PostPublicConnection, ProviderGithubApp } from '@nangohq/types';
 
-const schemaBody = z.object({
+const schemaBody = z.strictObject({
     provider_config_key: z.string(),
     metadata: z.record(z.string(), z.unknown()).optional(),
     connection_config: z
@@ -98,7 +98,7 @@ export const postPublicConnection = asyncWrapper<PostPublicConnection>(async (re
     }
 
     const { environment, account, plan } = res.locals;
-    const body: PostPublicConnection['Body'] = req.body;
+    const body: PostPublicConnection['Body'] = valBody.data;
 
     const integration = await configService.getProviderConfig(body.provider_config_key, environment.id);
     if (!integration) {
@@ -284,7 +284,7 @@ export const postPublicConnection = asyncWrapper<PostPublicConnection>(async (re
     let endUser: EndUser | undefined;
     if (body.end_user) {
         await db.knex.transaction(async (trx) => {
-            const endUserRes = await upsertEndUser(trx, { account, environment, endUserPayload: body.end_user });
+            const endUserRes = await upsertEndUser(trx, { account, environment, endUserPayload: body.end_user! });
             if (endUserRes.isErr()) {
                 res.status(500).send({ error: { code: 'server_error', message: 'Failed to update end user' } });
                 return;
