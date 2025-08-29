@@ -43,7 +43,7 @@ jobs:
             sudo sh -c "
               cd $DEPLOY_DIR
               git fetch origin
-              git reset --hard origin/master
+              git pull origin master
               docker compose pull || true
               docker compose up -d
             "
