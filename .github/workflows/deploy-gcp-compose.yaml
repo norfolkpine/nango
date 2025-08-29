@@ -40,7 +40,7 @@ jobs:
             if [ -z "$DEPLOY_DIR" ]; then echo "::error::DEPLOY_DIR not provided"; exit 1; fi
 
             echo "Using DEPLOY_DIR: $DEPLOY_DIR"
-            cd "$DEPLOY_DIR"
+            sudo cd "$DEPLOY_DIR"
 
             sudo docker --version
             sudo docker compose version
