@@ -53,6 +53,7 @@ jobs:
               
               docker compose --env-file .env up -d
               docker restart nango-server
+              docker restart nango-worker
               docker restart nango-redis
 
               echo '✅ Nango redeployed clean'
