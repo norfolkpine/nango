@@ -46,6 +46,9 @@ jobs:
               # sync repo
               git pull origin master
 
+              export NANGO_SERVER_CSP_FRAME_ANCESTORS='${{ secrets.NANGO_SERVER_CSP_FRAME_ANCESTORS }}'
+              export NANGO_SERVER_X_FRAME_OPTIONS='${{ secrets.NANGO_SERVER_X_FRAME_OPTIONS }}'
+
               docker compose down --rmi all -v
               
               docker compose --env-file .env up -d
